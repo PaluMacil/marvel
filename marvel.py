@@ -1,10 +1,9 @@
 import time
 import os
-from typing import List
+from typing import List, Optional
 
 import requests
 from hashlib import md5
-import db
 from models import Hero
 
 # API's max page limit for a resource type
@@ -23,7 +22,7 @@ def auth_params():
     }
 
 
-def fetch_thumbnail(partial_url):
+def fetch_thumbnail(partial_url) -> bytes:
     url = f"{partial_url}/standard_medium.jpg"
     resp = requests.get(url, auth_params())
 
@@ -34,14 +33,11 @@ def fetch_thumbnail(partial_url):
     return resp.content
 
 
-def fetch_appearances(hero_id: int, **kwargs) -> List[int]:
+def fetch_associated_ids(hero_id: int) -> List[int]:
     url = f'https://gateway.marvel.com/v1/public/characters/{hero_id}/comics'
-    offset = kwargs.get('offset', 0)
-    comic_ids: List[int] = kwargs.get('comic_ids', [])
     params = auth_params()
     params.update({
         'limit': PAGE_LIMIT,
-        'offset': str(offset),
         'orderBy': 'title'
     })
     resp = requests.get(url, params)
@@ -49,17 +45,15 @@ def fetch_appearances(hero_id: int, **kwargs) -> List[int]:
         raise Exception(f'fetching comics for hero id {hero_id}: {resp.text}')
 
     data_object = resp.json()['data']
-    new_ids: List[int] = [comic_object['id'] for comic_object in data_object['results']]
-    comic_ids.extend(new_ids)
-    retrieved_count = len(comic_ids)
-    total_comics = data_object['total']
+    characters = [comic_object['characters']['items'] for comic_object in data_object['results']]
+    # flatten list of character lists to list of characters
+    characters = sum(characters, [])
+    character_uris = [character['resourceURI'] for character in characters]
+    character_ids = [int(uri.split('/')[-1]) for uri in character_uris]
+    # get distinct list
+    character_ids = list(set(character_ids))
 
-    if retrieved_count < total_comics:
-        return fetch_appearances(hero_id,
-                                 offset=offset + PAGE_LIMIT,
-                                 comic_ids=comic_ids)
-
-    return comic_ids
+    return character_ids
 
 
 def parse_hero(data) -> Hero:
@@ -68,30 +62,24 @@ def parse_hero(data) -> Hero:
     description = data['description']
     picture_url = data['thumbnail']['path']
     picture = fetch_thumbnail(picture_url)
-    comic_uris = (item['resourceURI'] for item in data['comics']['items'])
-    comic_ids = [int(uri.split('/')[-1]) for uri in comic_uris]
-    total_comics = data['comics']['available']
-    if len(comic_ids) < total_comics:
-        # don't reuse the first 20 from here because we can't control the orderby
-        comic_ids = fetch_appearances(id)
+
     return Hero(id=id,
                 name=name,
                 description=description,
-                picture=picture,
-                appearances=comic_ids)
+                picture=picture)
 
 
-def fetch_hero(name: str) -> Hero:
-    hero = db.get_hero(name=name)
-    if hero:
-        return hero
-
+def fetch_hero(id: Optional[int] = None, name: Optional[str] = None) -> Hero:
+    if id and name:
+        raise Exception('cannot use both id and name in same search')
     url = 'https://gateway.marvel.com/v1/public/characters'
+    if id:
+        url = f'{url}/{id}'
     params = auth_params()
-    params.update({
-        'nameStartsWith': name,
-        'limit': 2
-    })
+    if name:
+        params.update({
+            'name': name,
+        })
     resp = requests.get(url, params)
     if not resp.ok:
         raise Exception(f'fetching : ' + resp.text)
@@ -99,32 +87,3 @@ def fetch_hero(name: str) -> Hero:
     hero = parse_hero(data)
 
     return hero
-
-
-def fetch_heroes(comic_id: int, **kwargs) -> List[Hero]:
-    url = f'https://gateway.marvel.com/v1/public/comics/{comic_id}/characters'
-    offset = kwargs.get('offset', 0)
-    all_heroes: List[Hero] = kwargs.get('heroes', [])
-
-    params = auth_params()
-    params.update({
-        'limit': PAGE_LIMIT,
-        'offset': str(offset),
-        'orderBy': 'name'
-    })
-    resp = requests.get(url, params)
-    if not resp.ok:
-        raise Exception('fetching characters: ' + resp.text)
-
-    data_object = resp.json()['data']
-    new_heroes = [parse_hero(hero_data) for hero_data in data_object['results']]
-    all_heroes.extend(new_heroes)
-    retrieved_count = len(all_heroes)
-    total_heroes = data_object['total']
-
-    if retrieved_count < total_heroes:
-        return fetch_heroes(comic_id,
-                            offset=offset + PAGE_LIMIT,
-                            heroes=all_heroes)
-
-    return all_heroes
