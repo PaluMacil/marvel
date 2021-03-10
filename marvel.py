@@ -82,7 +82,7 @@ def fetch_hero(id: Optional[int] = None, name: Optional[str] = None) -> Hero:
         })
     resp = requests.get(url, params)
     if not resp.ok:
-        raise Exception(f'fetching : ' + resp.text)
+        raise Exception(f'fetching {url}: {resp.text}')
     data = resp.json()['data']['results'][0]
     hero = parse_hero(data)
 
