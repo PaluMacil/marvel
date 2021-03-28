@@ -66,9 +66,9 @@ sudo docker run --env-file docker.env --rm spectrum
         total_comics = data_object['total']
     
         if retrieved_count < total_comics:
-            return fetch_appearances(hero_id,
-                                     offset=offset + PAGE_LIMIT,
-                                     comics=comics)
+            return fetch_comics(hero_id,
+                                offset=offset + PAGE_LIMIT,
+                                comics=comics)
     
         return comics
     ```
